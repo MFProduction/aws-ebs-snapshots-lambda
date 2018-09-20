@@ -36,6 +36,21 @@ It will upload functions to s3 and deploy stack with labda functions IAM policie
 
 You can also update stack and lambda functions with `deploy` script, just use the same prefix as in original deploy
 
+## Usage and Tags
+After deploying stack to aws you need to manually add tags instances that you want to backup.
+### Instance tags
+- Backup: Yes (this will enable instance backup)
+- Retention: number of retention days (optional; set number of days you want store backups) - these does not apply to daily and monthly backups
+
+### Snapshot tags
+This tags are created with lambda script.
+- Name - Instance name and creation date
+- DeleteOn - Date when snapshot will be deleted
+- Type - automated
+- RetentionType - daily, weekly or monthly
+
+You can manually add special tag `KeepForever` which i believe is self explanatory
+
 ## Files:
 
 Each file implements a single AWS Lambda function. Stack folder contains cloudformation files and deploy scripts.
