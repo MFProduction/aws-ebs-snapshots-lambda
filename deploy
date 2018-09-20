@@ -1,0 +1,68 @@
+#!/bin/bash -e
+echo "Backup manager deploy setup"
+read -p "Organization Name (eg. pj): " org_name
+
+read -p "S3 Bucket name: " s3_bucket
+
+read -p "AWS profile (default): " aws_profile
+aws_profile=${aws_profile:-default}
+
+(cd functions; zip -r ../backup-manager .)
+aws s3 cp backup-manager.zip s3://$s3_bucket --profile $aws_profile
+rm backup-manager.zip
+echo "zip file with functions uploaded to https://s3-eu-west-1.amazonaws.com/$s3_bucket/backup-manager.zip"
+
+python upload_template.py $s3_bucket $aws_profile
+
+
+aws cloudformation describe-stacks --stack-name $org_name-snapshot-manager  --profile $aws_profile > /dev/null 2>&1
+check=$?
+if [ "$check" -eq 0 ]; then
+    echo "updating stack"
+    set +e
+    aws cloudformation update-stack \
+    --profile $aws_profile \
+    --region eu-west-1 \
+    --stack-name "$org_name-snapshot-manager" \
+    --template-url "https://s3.amazonaws.com/$s3_bucket/backup-manager-stack.json" \
+    --capabilities '["CAPABILITY_IAM"]' \
+    --tags \
+        Key="Environment",Value="production" \
+        Key="AppType",Value="backups" \
+        Key="Owner",Value="matej.ferenc@dlabs.si" \
+    --parameter \
+        ParameterKey=LambdaMemorySize,ParameterValue='128' \
+        ParameterKey=LambdaTimeout,ParameterValue='60' \
+        ParameterKey=S3Bucket,ParameterValue="$s3_bucket"
+    set -e
+    echo "Updating function code"
+    function_1=$(aws cloudformation describe-stacks --stack-name pj-snapshot-manager | jq '.[]' | jq '.[0]' | jq '.Outputs' | jq '.[0]' | jq '.OutputValue')
+    function_1_name="${function_1%\"}"
+    function_1_name="${function_1_name#\"}"
+
+    function_2=$(aws cloudformation describe-stacks --stack-name pj-snapshot-manager | jq '.[]' | jq '.[0]' | jq '.Outputs' | jq '.[1]' | jq '.OutputValue')
+    function_2_name="${function_2%\"}"
+    function_2_name="${function_2_name#\"}"
+
+    aws lambda update-function-code --publish --function-name $function_1_name --s3-bucket $s3_bucket --s3-key backup-manager.zip
+    aws lambda update-function-code --publish  --function-name $function_2_name --s3-bucket $s3_bucket --s3-key backup-manager.zip
+    echo "Stack updated"
+else
+    echo "Creating stack"
+    aws cloudformation create-stack \
+    --profile $aws_profile \
+    --region eu-west-1 \
+    --stack-name "$org_name-snapshot-manager" \
+    --template-url "https://s3.amazonaws.com/$s3_bucket/backup-manager-stack.json" \
+    --timeout-in-minutes 20 \
+    --no-disable-rollback \
+    --capabilities '["CAPABILITY_IAM"]' \
+    --tags \
+        Key="Environment",Value="production" \
+        Key="AppType",Value="backups" \
+        Key="Owner",Value="matej.ferenc@dlabs.si" \
+    --parameter \
+        ParameterKey=LambdaMemorySize,ParameterValue='128' \
+        ParameterKey=LambdaTimeout,ParameterValue='60' \
+        ParameterKey=S3Bucket,ParameterValue="$s3_bucket"
+fi
